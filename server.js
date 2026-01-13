@@ -192,6 +192,27 @@ app.post('/obfuscate', async (req, res) => {
 // Start server
 app.listen(PORT, async () => {
     console.log(`Obfuscation API running on port ${PORT}`);
+    
+    // DEBUG: Check prometheus
+    const fs = require('fs');
+    console.log('=== PROMETHEUS DEBUG ===');
+    console.log('Current directory:', __dirname);
+    console.log('Files in current dir:', fs.readdirSync('.'));
+    
+    if (fs.existsSync('./prometheus')) {
+        console.log('✅ prometheus folder EXISTS');
+        console.log('Files in prometheus:', fs.readdirSync('./prometheus'));
+        
+        if (fs.existsSync('./prometheus/cli.lua')) {
+            console.log('✅ cli.lua EXISTS');
+        } else {
+            console.log('❌ cli.lua NOT FOUND');
+        }
+    } else {
+        console.log('❌ prometheus folder NOT FOUND');
+    }
+    console.log('========================');
+    
     await ensureTempDir();
     
     // Periodic cleanup
