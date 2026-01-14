@@ -11,7 +11,7 @@ end
 package.path = script_path() .. "?.lua;" .. package.path;
 ---@diagnostic disable-next-line: different-requires
 local Prometheus = require("prometheus");
-Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Info;
+-- Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Info;
 
 -- Check if the file exists
 local function file_exists(file)
