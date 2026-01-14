@@ -59,26 +59,49 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Run Prometheus CLI directly with lua5.1
+        // Create a wrapper that replaces logger before loading Prometheus
+        const wrapperScript = `
+-- Override logger BEFORE anything else loads
+package.preload["logger"] = function()
+    return {
+        info = function() end,
+        warn = function() end,
+        error = function() end,
+        success = function() end,
+        log = function() end
+    }
+end
+
+-- Set up paths
+package.path = "./src/?.lua;./src/?/init.lua;./?.lua;" .. package.path
+
+-- Now run CLI normally
+local cli = require("cli")
+
+-- Set up arguments
+_G.arg = {
+    [0] = "cli.lua",
+    [1] = "--preset",
+    [2] = "${preset}",
+    [3] = "${inputFile.replace(/\\/g, '/').replace(/'/g, "\\'")}",
+    [4] = "--out",
+    [5] = "${outputFile.replace(/\\/g, '/').replace(/'/g, "\\'")}"
+}
+
+-- Run CLI
+cli.main()
+`;
+        
+        const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
+        await fs.writeFile(wrapperFile, wrapperScript, 'utf8');
+        
         const result = await new Promise((resolve, reject) => {
             const prometheusDir = path.join(__dirname, 'prometheus');
-            const cliPath = path.join(prometheusDir, 'cli.lua');
             
-            // Execute: lua5.1 cli.lua --preset Medium input.lua --out output.lua
-            const luaProcess = spawn('lua5.1', [
-                cliPath,
-                '--preset', preset,
-                path.resolve(inputFile),
-                '--out', path.resolve(outputFile)
-            ], {
-                cwd: prometheusDir,
-                env: {
-                    ...process.env,
-                    LUA_PATH: './src/?.lua;./src/?/init.lua;./?.lua;;'
-                }
+            const luaProcess = spawn('lua5.1', [path.resolve(wrapperFile)], {
+                cwd: prometheusDir
             });
             
             let stdout = '';
@@ -86,44 +109,37 @@ async function obfuscateLua(code, preset = 'Medium') {
             
             luaProcess.stdout.on('data', (data) => {
                 stdout += data.toString();
-                console.log('Prometheus stdout:', data.toString());
             });
             
             luaProcess.stderr.on('data', (data) => {
                 stderr += data.toString();
-                console.error('Prometheus stderr:', data.toString());
             });
             
             luaProcess.on('close', (code) => {
-                console.log('Prometheus exit code:', code);
                 if (code === 0) {
                     resolve({ stdout, stderr });
                 } else {
-                    reject(new Error(`Obfuscation failed with exit code ${code}: ${stderr || stdout}`));
+                    reject(new Error(`Exit code ${code}: ${stderr || stdout}`));
                 }
             });
             
             luaProcess.on('error', (error) => {
-                console.error('Prometheus process error:', error);
                 reject(error);
             });
             
             setTimeout(() => {
                 luaProcess.kill();
-                reject(new Error('Obfuscation timeout'));
+                reject(new Error('Timeout'));
             }, 5 * 60 * 1000);
         });
         
-        // Read output
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
-        
-        // Add header
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
         obfuscatedCode = header + obfuscatedCode;
         
-        // Cleanup
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
+        await fs.unlink(wrapperFile).catch(() => {});
         
         const processingTime = Date.now() - startTime;
         
@@ -187,11 +203,9 @@ app.listen(PORT, async () => {
 });
 
 process.on('SIGTERM', () => {
-    console.log('SIGTERM received, shutting down gracefully');
     process.exit(0);
 });
 
 process.on('SIGINT', () => {
-    console.log('SIGINT received, shutting down gracefully');
     process.exit(0);
 });
