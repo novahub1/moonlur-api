@@ -1,8 +1,11 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { execFile } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const util = require('util');
+
+const execFilePromise = util.promisify(execFile);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,10 +44,13 @@ async function cleanupTempFiles() {
         
         for (const file of files) {
             const filePath = path.join(TEMP_DIR, file);
-            const stats = await fs.stat(filePath);
-            
-            if (now - stats.mtimeMs > 10 * 60 * 1000) {
-                await fs.unlink(filePath);
+            try {
+                const stats = await fs.stat(filePath);
+                if (now - stats.mtimeMs > 10 * 60 * 1000) {
+                    await fs.unlink(filePath);
+                }
+            } catch (err) {
+                // Ignore
             }
         }
     } catch (error) {
@@ -61,47 +67,33 @@ async function obfuscateLua(code, preset = 'Medium') {
     try {
         await fs.writeFile(inputFile, code, 'utf8');
         
-        const result = await new Promise((resolve, reject) => {
-            const prometheusDir = path.join(__dirname, 'prometheus');
-            const cliPath = path.join(prometheusDir, 'cli.lua');
+        const prometheusDir = path.join(__dirname, 'prometheus');
+        const cliPath = path.join(prometheusDir, 'cli.lua');
+        
+        try {
+            const { stdout, stderr } = await Promise.race([
+                execFilePromise('lua5.1', [
+                    cliPath,
+                    '--preset', preset,
+                    '--nocolors',
+                    inputFile,
+                    '--out', outputFile
+                ], {
+                    cwd: prometheusDir,
+                    timeout: 300000,
+                    maxBuffer: 50 * 1024 * 1024
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout')), 300000)
+                )
+            ]);
             
-            const luaProcess = spawn('lua5.1', [
-                cliPath,
-                '--preset', preset,
-                path.resolve(inputFile),
-                '--out', path.resolve(outputFile)
-            ], {
-                cwd: prometheusDir
-            });
+            console.log('Prometheus output:', stdout);
+            if (stderr) console.error('Prometheus stderr:', stderr);
             
-            let stdout = '';
-            let stderr = '';
-            
-            luaProcess.stdout.on('data', (data) => {
-                stdout += data.toString();
-            });
-            
-            luaProcess.stderr.on('data', (data) => {
-                stderr += data.toString();
-            });
-            
-            luaProcess.on('close', (code) => {
-                if (code === 0) {
-                    resolve({ stdout, stderr });
-                } else {
-                    reject(new Error(`Exit code ${code}: ${stderr || stdout}`));
-                }
-            });
-            
-            luaProcess.on('error', (error) => {
-                reject(error);
-            });
-            
-            setTimeout(() => {
-                luaProcess.kill();
-                reject(new Error('Timeout'));
-            }, 5 * 60 * 1000);
-        });
+        } catch (error) {
+            throw new Error(`Obfuscation failed: ${error.message}`);
+        }
         
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
@@ -149,7 +141,7 @@ app.post('/obfuscate', async (req, res) => {
             });
         }
         
-        const validPresets = ['Weak', 'Medium', 'Strong'];
+        const validPresets = ['Weak', 'Medium', 'Strong', 'Minify'];
         const selectedPreset = validPresets.includes(preset) ? preset : 'Medium';
         
         const result = await obfuscateLua(code, selectedPreset);
@@ -166,7 +158,7 @@ app.post('/obfuscate', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`Obfuscation API running on port ${PORT}`);
+    console.log(`🚀 Mønlur Obfuscator API running on port ${PORT}`);
     await ensureTempDir();
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
