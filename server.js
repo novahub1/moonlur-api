@@ -65,21 +65,23 @@ function preprocessLuauCode(code) {
     console.log('Preprocessing Luau code...');
     
     // 1. Converter task.wait() para wait()
-    code = code.replace(/task\.wait\s*\(/g, 'wait(');
+    code = code.replace(/task\.wait/g, 'wait');
     
-    // 2. Converter task.spawn() para coroutine.wrap
-    code = code.replace(/task\.spawn\s*\(\s*function\s*\(\)/g, 'coroutine.wrap(function()');
+    // 2. Converter task.spawn() para spawn() (SIMPLES E DIRETO)
+    code = code.replace(/task\.spawn/g, 'spawn');
     
-    // 3. Converter task.delay() para delay() (ou spawn com wait)
-    code = code.replace(/task\.delay\s*\(\s*([^,]+)\s*,\s*function\s*\(\)/g, 
-        'spawn(function() wait($1) ');
+    // 3. Converter task.delay() para delay()
+    code = code.replace(/task\.delay/g, 'delay');
     
     // 4. Remover tipos do Luau (: tipo)
     // Remove tipos em parâmetros de função: function(var: type) -> function(var)
-    code = code.replace(/(\w+)\s*:\s*\w+(\?)?(?=\s*[,\)])/g, '$1');
+    code = code.replace(/(\w+)\s*:\s*[\w\[\]<>]+(\?)?(?=\s*[,\)])/g, '$1');
     
     // Remove tipos em variáveis locais: local var: type = -> local var =
-    code = code.replace(/local\s+(\w+)\s*:\s*\w+(\?)?\s*=/g, 'local $1 =');
+    code = code.replace(/local\s+(\w+)\s*:\s*[\w\[\]<>]+(\?)?\s*=/g, 'local $1 =');
+    
+    // Remove tipos em retorno de função: function(): type
+    code = code.replace(/\)\s*:\s*[\w\[\]<>]+(?=\s)/g, ')');
     
     // 5. Remover operadores compostos (+=, -=, etc) se existirem
     code = code.replace(/(\w+)\s*\+=\s*/g, '$1 = $1 + ');
