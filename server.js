@@ -58,64 +58,6 @@ async function cleanupTempFiles() {
     }
 }
 
-// ============================================
-// FUNÇÃO PARA CONVERTER LUAU PARA LUA 5.1
-// ============================================
-function preprocessLuauCode(code) {
-    console.log('Preprocessing Luau code...');
-    
-    // 1. Substituir task.spawn() por coroutine.resume(coroutine.create())
-    code = code.replace(/task\.spawn\s*\(/g, 'coroutine.resume(coroutine.create(');
-    
-    // 2. Substituir task.wait() por uma implementação básica
-    // No Roblox após obfuscar, isso será interpretado como wait()
-    code = code.replace(/task\.wait\s*\(/g, 'wait(');
-    
-    // 3. Substituir task.delay() por coroutine com espera
-    code = code.replace(/task\.delay\s*\(\s*([^,]+)\s*,\s*/g, 
-        'coroutine.resume(coroutine.create(function() wait($1) ');
-    
-    // 4. Remover tipos do Luau (: tipo)
-    // Remove tipos em parâmetros de função
-    code = code.replace(/(\w+)\s*:\s*[\w\[\]<>|]+(\?)?(?=\s*[,\)])/g, '$1');
-    
-    // Remove tipos em variáveis locais
-    code = code.replace(/local\s+(\w+)\s*:\s*[\w\[\]<>|]+(\?)?\s*=/g, 'local $1 =');
-    
-    // Remove tipos em retorno de função
-    code = code.replace(/\)\s*:\s*[\w\[\]<>|]+/g, ')');
-    
-    // 5. Remover operadores compostos
-    code = code.replace(/(\w+)\s*\+=\s*/g, '$1 = $1 + ');
-    code = code.replace(/(\w+)\s*-=\s*/g, '$1 = $1 - ');
-    code = code.replace(/(\w+)\s*\*=\s*/g, '$1 = $1 * ');
-    code = code.replace(/(\w+)\s*\/=\s*/g, '$1 = $1 / ');
-    
-    // 6. Adicionar definições de funções do Roblox no topo (fallback)
-    const robloxShims = `
--- Roblox compatibility shims
-local wait = wait or function(t) 
-    local start = os.clock()
-    repeat until os.clock() - start >= (t or 0)
-end
-local spawn = spawn or function(f) 
-    coroutine.resume(coroutine.create(f))
-end
-local delay = delay or function(t, f)
-    coroutine.resume(coroutine.create(function()
-        wait(t)
-        f()
-    end))
-end
-
-`;
-    
-    code = robloxShims + code;
-    
-    console.log('Luau preprocessing complete');
-    return code;
-}
-
 async function obfuscateLua(code, preset = 'Medium') {
     const startTime = Date.now();
     const tempId = crypto.randomBytes(16).toString('hex');
@@ -123,16 +65,19 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        // ✨ PROCESSAR O CÓDIGO LUAU ANTES DE SALVAR
-        const processedCode = preprocessLuauCode(code);
-        await fs.writeFile(inputFile, processedCode, 'utf8');
+        await fs.writeFile(inputFile, code, 'utf8');
         
         const prometheusDir = path.join(__dirname, 'prometheus');
         const cliPath = path.join(prometheusDir, 'cli.lua');
         
+        console.log(`🔄 Starting obfuscation with preset: ${preset}`);
+        console.log(`📁 Input file: ${inputFile}`);
+        console.log(`📁 Output file: ${outputFile}`);
+        
         try {
+            // Usar LUAU ao invés de lua5.1
             const { stdout, stderr } = await Promise.race([
-                execFilePromise('lua5.1', [
+                execFilePromise('luau', [
                     cliPath,
                     '--preset', preset,
                     '--nocolors',
@@ -144,25 +89,38 @@ async function obfuscateLua(code, preset = 'Medium') {
                     maxBuffer: 50 * 1024 * 1024
                 }),
                 new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), 300000)
+                    setTimeout(() => reject(new Error('Obfuscation timeout after 5 minutes')), 300000)
                 )
             ]);
             
-            console.log('Prometheus output:', stdout);
-            if (stderr) console.error('Prometheus stderr:', stderr);
+            console.log('✅ Prometheus stdout:', stdout);
+            if (stderr) console.log('⚠️ Prometheus stderr:', stderr);
             
         } catch (error) {
+            console.error('❌ Prometheus execution error:', error);
             throw new Error(`Obfuscation failed: ${error.message}`);
+        }
+        
+        // Verificar se o arquivo de saída foi criado
+        try {
+            await fs.access(outputFile);
+        } catch {
+            throw new Error('Output file was not created by Prometheus');
         }
         
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
         obfuscatedCode = header + obfuscatedCode;
         
+        // Cleanup
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
         
         const processingTime = Date.now() - startTime;
+        
+        console.log(`✅ Obfuscation completed in ${processingTime}ms`);
+        console.log(`📊 Original size: ${code.length} bytes`);
+        console.log(`📊 Obfuscated size: ${obfuscatedCode.length} bytes`);
         
         return {
             success: true,
@@ -173,6 +131,7 @@ async function obfuscateLua(code, preset = 'Medium') {
         };
         
     } catch (error) {
+        // Cleanup em caso de erro
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
         throw error;
@@ -204,12 +163,14 @@ app.post('/obfuscate', async (req, res) => {
         const validPresets = ['Weak', 'Medium', 'Strong', 'Minify'];
         const selectedPreset = validPresets.includes(preset) ? preset : 'Medium';
         
+        console.log(`📥 Received obfuscation request - Preset: ${selectedPreset}, Code length: ${code.length}`);
+        
         const result = await obfuscateLua(code, selectedPreset);
         
         res.json(result);
         
     } catch (error) {
-        console.error('Obfuscation error:', error);
+        console.error('❌ Obfuscation error:', error);
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -219,6 +180,7 @@ app.post('/obfuscate', async (req, res) => {
 
 app.listen(PORT, async () => {
     console.log(`🚀 Mønlur Obfuscator API running on port ${PORT}`);
+    console.log(`🔧 Using Luau CLI for Roblox LuaU support`);
     await ensureTempDir();
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
