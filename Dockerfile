@@ -1,24 +1,30 @@
 FROM node:18-slim
 
-# Instalar dependências necessárias
+# Instalar dependências
 RUN apt-get update && apt-get install -y \
     git \
-    wget \
+    curl \
     unzip \
+    build-essential \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
-
-# Baixar e instalar Luau (versão específica que funciona)
-RUN wget https://github.com/luau-lang/luau/releases/download/0.652/luau-ubuntu.zip \
-    && unzip luau-ubuntu.zip -d /usr/local/bin/ \
-    && chmod +x /usr/local/bin/luau \
-    && chmod +x /usr/local/bin/luau-analyze \
-    && rm luau-ubuntu.zip
 
 WORKDIR /app
 
-# Clonar o Prometheus com suporte LuaU
-RUN git clone https://github.com/wcrddn/Prometheus.git prometheus
+# Baixar e compilar Luau do Roblox
+RUN git clone https://github.com/luau-lang/luau.git /tmp/luau \
+    && cd /tmp/luau \
+    && cmake . -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build . --target Luau.Repl.CLI --config Release \
+    && cp luau /usr/local/bin/luau \
+    && chmod +x /usr/local/bin/luau \
+    && cd / \
+    && rm -rf /tmp/luau
 
+# Clonar Prometheus
+RUN git clone https://github.com/Levno7/prometheus.git prometheus
+
+# Copiar arquivos da aplicação
 COPY package*.json ./
 RUN npm install
 
