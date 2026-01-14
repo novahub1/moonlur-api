@@ -21,8 +21,8 @@ RUN git clone https://github.com/luau-lang/luau.git /tmp/luau \
     && cd / \
     && rm -rf /tmp/luau
 
-# Clonar Prometheus
-RUN git clone https://github.com/Levno7/prometheus.git prometheus
+# Clonar Prometheus (repositório correto)
+RUN git clone https://github.com/levno-710/Prometheus.git prometheus
 
 # Copiar arquivos da aplicação
 COPY package*.json ./
