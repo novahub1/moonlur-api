@@ -79,15 +79,17 @@ async function obfuscateLua(code, preset = 'Medium') {
         await fs.writeFile(inputFile, code, 'utf8');
         
         // Run Prometheus
-        const result = await new Promise((resolve, reject) => {
-            const args = [
-                './prometheus/cli.lua',
-                '--preset', preset,
-                inputFile,
-                '--out', outputFile
-            ];
-            
-            const luaProcess = spawn('lua', args);
+const result = await new Promise((resolve, reject) => {
+    const args = [
+        'cli.lua',
+        '--preset', preset,
+        path.resolve(inputFile),
+        '--out', path.resolve(outputFile)
+    ];
+    
+    const luaProcess = spawn('lua', args, {
+        cwd: './prometheus'
+    });
             
             let stdout = '';
             let stderr = '';
