@@ -1,62 +1,36 @@
--- This Script is Part of the Prometheus Obfuscator by Levno_710
---
--- logger.lua
-
+-- Fixed Logger - Silent Mode
 local logger = {}
-local config = require("config");
-local colors = require("colors");
 
 logger.LogLevel = {
-	Error = 0,
-	Warn = 1,
-	Log = 2,
-	Info = 2,
-	Debug = 3,
+    DEBUG = 0,
+    INFO = 1,
+    WARN = 2,
+    ERROR = 3,
+    SUCCESS = 4
 }
 
-logger.logLevel = logger.LogLevel.Log;
-
-logger.debugCallback = function(...)
-	print(colors(config.NameUpper .. ": " ..  ..., "grey"));
-end;
-function logger:debug(...)
-	if self.logLevel >= self.LogLevel.Debug then
-		self.debugCallback(...);
-	end
+function logger.log(level, ...)
+    -- Silent mode, do nothing
 end
 
-logger.logCallback = function(...)
-	print(colors(config.NameUpper .. ": ", "magenta") .. ...);
-end;
-function logger:log(...)
-	if self.logLevel >= self.LogLevel.Log then
-		self.logCallback(...);
-	end
+function logger.info(...)
+    -- Silent mode
 end
 
-function logger:info(...)
-	if self.logLevel >= self.LogLevel.Log then
-		self.logCallback(...);
-	end
+function logger.warn(...)
+    -- Silent mode
 end
 
-logger.warnCallback = function(...)
-	print(colors(config.NameUpper .. ": " .. ..., "yellow"));
-end;
-function logger:warn(...)
-	if self.logLevel >= self.LogLevel.Warn then
-		self.warnCallback(...);
-	end
+function logger.error(...)
+    -- Silent mode
 end
 
-logger.errorCallback = function(...)
-	print(colors(config.NameUpper .. ": " .. ..., "red"))
-	error(...);
-end;
-function logger:error(...)
-	self.errorCallback(...);
-	error(config.NameUpper .. ": logger.errorCallback did not throw an Error!");
+function logger.success(...)
+    -- Silent mode
 end
 
+function logger.setLogLevel(level)
+    -- Silent mode
+end
 
-return logger;
+return logger
