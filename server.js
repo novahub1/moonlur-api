@@ -1,5 +1,4 @@
 const express = require('express');
-const { spawn } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
@@ -52,108 +51,78 @@ async function cleanupTempFiles() {
     }
 }
 
-async function obfuscateLua(code, preset = 'Medium') {
-    const startTime = Date.now();
-    const tempId = crypto.randomBytes(16).toString('hex');
-    const inputFile = path.join(TEMP_DIR, `${tempId}_input.lua`);
-    const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
-    
-    try {
-        await fs.writeFile(inputFile, code, 'utf8');
-        
-        // Create a wrapper that replaces logger before loading Prometheus
-        const wrapperScript = `
--- Override logger BEFORE anything else loads
-package.preload["logger"] = function()
-    return {
-        info = function() end,
-        warn = function() end,
-        error = function() end,
-        success = function() end,
-        log = function() end
-    }
-end
-
--- Set up paths
-package.path = "./src/?.lua;./src/?/init.lua;./?.lua;" .. package.path
-
--- Now run CLI normally
-local cli = require("cli")
-
--- Set up arguments
-_G.arg = {
-    [0] = "cli.lua",
-    [1] = "--preset",
-    [2] = "${preset}",
-    [3] = "${inputFile.replace(/\\/g, '/').replace(/'/g, "\\'")}",
-    [4] = "--out",
-    [5] = "${outputFile.replace(/\\/g, '/').replace(/'/g, "\\'")}"
+function generateVarName(index) {
+    const chars = 'l1I';
+    let name = '';
+    let n = index;
+    do {
+        name = chars[n % chars.length] + name;
+        n = Math.floor(n / chars.length);
+    } while (n > 0);
+    return '_' + name;
 }
 
--- Run CLI
-cli.main()
-`;
+function obfuscateLuaCode(code, preset) {
+    let obfuscated = code;
+    
+    // String obfuscation
+    let stringIndex = 0;
+    obfuscated = obfuscated.replace(/"([^"\\]*(\\.[^"\\]*)*)"|'([^'\\]*(\\.[^'\\]*)*)'/g, (match) => {
+        const str = match.slice(1, -1);
+        if (str.length < 3) return match;
         
-        const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
-        await fs.writeFile(wrapperFile, wrapperScript, 'utf8');
+        const bytes = [];
+        for (let i = 0; i < str.length; i++) {
+            bytes.push(str.charCodeAt(i));
+        }
         
-        const result = await new Promise((resolve, reject) => {
-            const prometheusDir = path.join(__dirname, 'prometheus');
-            
-            const luaProcess = spawn('lua5.1', [path.resolve(wrapperFile)], {
-                cwd: prometheusDir
-            });
-            
-            let stdout = '';
-            let stderr = '';
-            
-            luaProcess.stdout.on('data', (data) => {
-                stdout += data.toString();
-            });
-            
-            luaProcess.stderr.on('data', (data) => {
-                stderr += data.toString();
-            });
-            
-            luaProcess.on('close', (code) => {
-                if (code === 0) {
-                    resolve({ stdout, stderr });
-                } else {
-                    reject(new Error(`Exit code ${code}: ${stderr || stdout}`));
+        return `(function()local t={${bytes.join(',')}}local s=''for i=1,#t do s=s..string.char(t[i])end return s end)()`;
+    });
+    
+    // Variable name obfuscation (basic)
+    if (preset === 'Medium' || preset === 'Strong') {
+        const localVars = obfuscated.match(/local\s+([a-zA-Z_][a-zA-Z0-9_]*)/g);
+        if (localVars) {
+            const uniqueVars = [...new Set(localVars.map(v => v.replace('local ', '')))];
+            uniqueVars.forEach((varName, index) => {
+                if (['print', 'local', 'function', 'end', 'if', 'then', 'else', 'for', 'while', 'do', 'return'].includes(varName)) {
+                    return;
                 }
+                const newName = generateVarName(index);
+                const regex = new RegExp(`\\b${varName}\\b`, 'g');
+                obfuscated = obfuscated.replace(regex, newName);
             });
-            
-            luaProcess.on('error', (error) => {
-                reject(error);
-            });
-            
-            setTimeout(() => {
-                luaProcess.kill();
-                reject(new Error('Timeout'));
-            }, 5 * 60 * 1000);
-        });
-        
-        let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
+        }
+    }
+    
+    // Add junk code
+    if (preset === 'Strong') {
+        const junk = `local ${generateVarName(999)}=function()return nil end;`;
+        obfuscated = junk + obfuscated;
+    }
+    
+    return obfuscated;
+}
+
+async function obfuscateLua(code, preset = 'Medium') {
+    const startTime = Date.now();
+    
+    try {
+        const obfuscatedCode = obfuscateLuaCode(code, preset);
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
-        obfuscatedCode = header + obfuscatedCode;
-        
-        await fs.unlink(inputFile).catch(() => {});
-        await fs.unlink(outputFile).catch(() => {});
-        await fs.unlink(wrapperFile).catch(() => {});
+        const finalCode = header + obfuscatedCode;
         
         const processingTime = Date.now() - startTime;
         
         return {
             success: true,
-            code: obfuscatedCode,
+            code: finalCode,
             processingTime,
             originalSize: code.length,
-            obfuscatedSize: obfuscatedCode.length
+            obfuscatedSize: finalCode.length
         };
         
     } catch (error) {
-        await fs.unlink(inputFile).catch(() => {});
-        await fs.unlink(outputFile).catch(() => {});
         throw error;
     }
 }
@@ -202,10 +171,5 @@ app.listen(PORT, async () => {
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
 
-process.on('SIGTERM', () => {
-    process.exit(0);
-});
-
-process.on('SIGINT', () => {
-    process.exit(0);
-});
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
