@@ -64,30 +64,53 @@ async function cleanupTempFiles() {
 function preprocessLuauCode(code) {
     console.log('Preprocessing Luau code...');
     
-    // 1. Converter task.wait() para wait()
-    code = code.replace(/task\.wait/g, 'wait');
+    // 1. Substituir task.spawn() por coroutine.resume(coroutine.create())
+    code = code.replace(/task\.spawn\s*\(/g, 'coroutine.resume(coroutine.create(');
     
-    // 2. Converter task.spawn() para spawn() (SIMPLES E DIRETO)
-    code = code.replace(/task\.spawn/g, 'spawn');
+    // 2. Substituir task.wait() por uma implementação básica
+    // No Roblox após obfuscar, isso será interpretado como wait()
+    code = code.replace(/task\.wait\s*\(/g, 'wait(');
     
-    // 3. Converter task.delay() para delay()
-    code = code.replace(/task\.delay/g, 'delay');
+    // 3. Substituir task.delay() por coroutine com espera
+    code = code.replace(/task\.delay\s*\(\s*([^,]+)\s*,\s*/g, 
+        'coroutine.resume(coroutine.create(function() wait($1) ');
     
     // 4. Remover tipos do Luau (: tipo)
-    // Remove tipos em parâmetros de função: function(var: type) -> function(var)
-    code = code.replace(/(\w+)\s*:\s*[\w\[\]<>]+(\?)?(?=\s*[,\)])/g, '$1');
+    // Remove tipos em parâmetros de função
+    code = code.replace(/(\w+)\s*:\s*[\w\[\]<>|]+(\?)?(?=\s*[,\)])/g, '$1');
     
-    // Remove tipos em variáveis locais: local var: type = -> local var =
-    code = code.replace(/local\s+(\w+)\s*:\s*[\w\[\]<>]+(\?)?\s*=/g, 'local $1 =');
+    // Remove tipos em variáveis locais
+    code = code.replace(/local\s+(\w+)\s*:\s*[\w\[\]<>|]+(\?)?\s*=/g, 'local $1 =');
     
-    // Remove tipos em retorno de função: function(): type
-    code = code.replace(/\)\s*:\s*[\w\[\]<>]+(?=\s)/g, ')');
+    // Remove tipos em retorno de função
+    code = code.replace(/\)\s*:\s*[\w\[\]<>|]+/g, ')');
     
-    // 5. Remover operadores compostos (+=, -=, etc) se existirem
+    // 5. Remover operadores compostos
     code = code.replace(/(\w+)\s*\+=\s*/g, '$1 = $1 + ');
     code = code.replace(/(\w+)\s*-=\s*/g, '$1 = $1 - ');
     code = code.replace(/(\w+)\s*\*=\s*/g, '$1 = $1 * ');
     code = code.replace(/(\w+)\s*\/=\s*/g, '$1 = $1 / ');
+    
+    // 6. Adicionar definições de funções do Roblox no topo (fallback)
+    const robloxShims = `
+-- Roblox compatibility shims
+local wait = wait or function(t) 
+    local start = os.clock()
+    repeat until os.clock() - start >= (t or 0)
+end
+local spawn = spawn or function(f) 
+    coroutine.resume(coroutine.create(f))
+end
+local delay = delay or function(t, f)
+    coroutine.resume(coroutine.create(function()
+        wait(t)
+        f()
+    end))
+end
+
+`;
+    
+    code = robloxShims + code;
     
     console.log('Luau preprocessing complete');
     return code;
