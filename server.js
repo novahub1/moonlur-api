@@ -10,11 +10,9 @@ const execFilePromise = util.promisify(execFile);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middlewares
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Auth middleware
 app.use((req, res, next) => {
     const apiKey = req.headers['x-api-key'];
     if (!apiKey || apiKey !== process.env.API_KEY) {
@@ -23,7 +21,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
@@ -61,6 +58,33 @@ async function cleanupTempFiles() {
     }
 }
 
+// CONVERTER LUAU PARA LUA 5.1 - SIMPLES E DIRETO
+function convertLuauToLua51(code) {
+    let converted = code;
+    
+    // Adicionar funções do Roblox no início
+    const robloxFunctions = `-- Roblox Functions
+local task = task or {}
+task.wait = task.wait or function(t) wait(t or 0) end
+task.spawn = task.spawn or function(f) coroutine.wrap(f)() end
+task.delay = task.delay or function(t, f) coroutine.wrap(function() wait(t) f() end)() end
+local wait = wait or function(t) local s = os.clock() repeat until os.clock() - s >= (t or 0) end
+
+`;
+    
+    // Remover tipos
+    converted = converted.replace(/:\s*[\w<>|\[\]\.]+(\?)?(?=\s*[,\)=])/g, '');
+    converted = converted.replace(/local\s+(\w+)\s*:\s*[\w<>|\[\]\.]+(\?)?\s*=/g, 'local $1 =');
+    
+    // Remover operadores compostos
+    converted = converted.replace(/(\w+)\s*\+=\s*/g, '$1 = $1 + ');
+    converted = converted.replace(/(\w+)\s*-=\s*/g, '$1 = $1 - ');
+    converted = converted.replace(/(\w+)\s*\*=\s*/g, '$1 = $1 * ');
+    converted = converted.replace(/(\w+)\s*\/=\s*/g, '$1 = $1 / ');
+    
+    return robloxFunctions + converted;
+}
+
 async function obfuscateLua(code, preset = 'Medium') {
     const startTime = Date.now();
     const tempId = crypto.randomBytes(16).toString('hex');
@@ -68,59 +92,39 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        await fs.writeFile(inputFile, code, 'utf8');
+        // Converter código
+        const convertedCode = convertLuauToLua51(code);
+        await fs.writeFile(inputFile, convertedCode, 'utf8');
         
         const prometheusDir = path.join(__dirname, 'prometheus');
         const cliPath = path.join(prometheusDir, 'cli.lua');
         
-        console.log(`🔥 Mønlur Obfuscator - Starting obfuscation`);
-        console.log(`📊 Preset: ${preset}`);
-        console.log(`📊 Code size: ${code.length} bytes`);
+        console.log(`🔥 Starting obfuscation with ${preset} preset`);
         
         try {
-            // Tentar com Luau primeiro
-            const { stdout, stderr } = await Promise.race([
-                execFilePromise('luau', [
-                    cliPath,
-                    '--preset', preset,
-                    '--nocolors',
-                    inputFile,
-                    '--out', outputFile
-                ], {
-                    cwd: prometheusDir,
-                    timeout: 300000,
-                    maxBuffer: 50 * 1024 * 1024
-                }),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Obfuscation timeout after 5 minutes')), 300000)
-                )
-            ]);
+            const { stdout, stderr } = await execFilePromise('lua5.1', [
+                cliPath,
+                '--preset', preset,
+                '--nocolors',
+                inputFile,
+                '--out', outputFile
+            ], {
+                cwd: prometheusDir,
+                timeout: 300000,
+                maxBuffer: 50 * 1024 * 1024
+            });
             
-            if (stdout) console.log('✅ Prometheus output:', stdout);
-            if (stderr) console.warn('⚠️ Prometheus warnings:', stderr);
+            if (stdout) console.log('✅', stdout);
+            if (stderr) console.log('⚠️', stderr);
             
         } catch (error) {
-            console.error('❌ Obfuscation failed:', error.message);
+            console.error('❌ Obfuscation error:', error.message);
             throw new Error(`Obfuscation failed: ${error.message}`);
         }
         
-        // Verificar se o arquivo de saída foi criado
-        try {
-            await fs.access(outputFile);
-        } catch {
-            throw new Error('Output file was not created by Prometheus');
-        }
-        
+        // Ler resultado
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
-        
-        // Header do Mønlur
-        const header = `--[[\n` +
-                      `    Mønlur Obfuscator v1.0\n` +
-                      `    Powered by Prometheus\n` +
-                      `    https://github.com/Levno7/prometheus\n` +
-                      `]]\n\n`;
-        
-        obfuscatedCode = header + obfuscatedCode;
+        obfuscatedCode = `-- Mønlur Obfuscator v1.0\n\n` + obfuscatedCode;
         
         // Cleanup
         await fs.unlink(inputFile).catch(() => {});
@@ -128,11 +132,7 @@ async function obfuscateLua(code, preset = 'Medium') {
         
         const processingTime = Date.now() - startTime;
         
-        console.log(`✅ Obfuscation completed successfully!`);
-        console.log(`⏱️ Processing time: ${processingTime}ms`);
-        console.log(`📊 Original size: ${code.length} bytes`);
-        console.log(`📊 Obfuscated size: ${obfuscatedCode.length} bytes`);
-        console.log(`📊 Size increase: ${((obfuscatedCode.length / code.length - 1) * 100).toFixed(2)}%`);
+        console.log(`✅ Done in ${processingTime}ms`);
         
         return {
             success: true,
@@ -143,29 +143,20 @@ async function obfuscateLua(code, preset = 'Medium') {
         };
         
     } catch (error) {
-        // Cleanup em caso de erro
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
         throw error;
     }
 }
 
-// Health check endpoint
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
-        service: 'Mønlur Obfuscator API',
-        version: '1.0.0',
-        timestamp: Date.now() 
-    });
+    res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-// Obfuscation endpoint
 app.post('/obfuscate', async (req, res) => {
     try {
         const { code, preset } = req.body;
         
-        // Validações
         if (!code || typeof code !== 'string') {
             return res.status(400).json({ 
                 success: false, 
@@ -180,24 +171,17 @@ app.post('/obfuscate', async (req, res) => {
             });
         }
         
-        // Validar preset
         const validPresets = ['Weak', 'Medium', 'Strong', 'Minify'];
         const selectedPreset = validPresets.includes(preset) ? preset : 'Medium';
         
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`📥 NEW OBFUSCATION REQUEST`);
-        console.log(`📊 Preset: ${selectedPreset}`);
-        console.log(`📊 Code length: ${code.length} characters`);
-        console.log(`📊 IP: ${req.ip}`);
-        console.log(`${'='.repeat(60)}\n`);
+        console.log(`📥 Request: ${selectedPreset}, ${code.length} chars`);
         
-        // Executar obfuscação
         const result = await obfuscateLua(code, selectedPreset);
         
         res.json(result);
         
     } catch (error) {
-        console.error('\n❌ OBFUSCATION ERROR:', error);
+        console.error('❌ Error:', error.message);
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -205,27 +189,11 @@ app.post('/obfuscate', async (req, res) => {
     }
 });
 
-// Start server
 app.listen(PORT, async () => {
-    console.log('\n' + '='.repeat(60));
-    console.log('🔥 MØNLUR OBFUSCATOR API');
-    console.log('='.repeat(60));
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🔧 Using Luau CLI for Roblox LuaU support`);
-    console.log(`⚡ Powered by Prometheus Obfuscator`);
-    console.log(`📝 Licensed under AGPL-3.0`);
-    console.log('='.repeat(60) + '\n');
-    
+    console.log(`🔥 Mønlur API running on port ${PORT}`);
     await ensureTempDir();
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
 
-process.on('SIGTERM', () => {
-    console.log('\n👋 Shutting down gracefully...');
-    process.exit(0);
-});
-
-process.on('SIGINT', () => {
-    console.log('\n👋 Shutting down gracefully...');
-    process.exit(0);
-});
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
