@@ -68,17 +68,14 @@ async function obfuscateLua(code, preset = 'Medium') {
         // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Create wrapper Lua script that calls Prometheus correctly
+        // Create wrapper Lua script that calls Prometheus CLI
         const wrapperScript = `
 package.path = package.path .. ";./src/?.lua;./src/?/init.lua"
 
 local args = {...}
 local inputFile = args[1]
 local outputFile = args[2]
-local preset = args[3]
-
--- Load Prometheus
-local Prometheus = require("prometheus")
+local presetName = args[3]
 
 -- Read input
 local file = io.open(inputFile, "r")
@@ -88,25 +85,27 @@ end
 local code = file:read("*all")
 file:close()
 
--- Get preset config
-local presets = require("presets")
-local config = presets[preset]
+-- Load CLI module which handles everything
+local cli = require("cli")
 
-if not config then
-    error("Invalid preset: " .. preset)
+-- Create a fake argv table that cli expects
+_G.arg = {
+    [0] = "cli.lua",
+    [1] = "--preset",
+    [2] = presetName,
+    [3] = inputFile,
+    [4] = "--out",
+    [5] = outputFile
+}
+
+-- Run CLI
+local success, err = pcall(function()
+    cli.main()
+end)
+
+if not success then
+    error("Obfuscation failed: " .. tostring(err))
 end
-
--- Create Prometheus instance and obfuscate
-local pipeline = Prometheus.new(config)
-local result = pipeline(code)
-
--- Write output
-local out = io.open(outputFile, "w")
-if not out then
-    error("Could not open output file")
-end
-out:write(result)
-out:close()
 
 print("Obfuscation completed successfully")
 `;
