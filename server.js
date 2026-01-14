@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Security middleware
 app.use((req, res, next) => {
     const apiKey = req.headers['x-api-key'];
     if (!apiKey || apiKey !== process.env.API_KEY) {
@@ -19,17 +18,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
     next();
 });
 
-// Temp directory
 const TEMP_DIR = path.join(__dirname, 'temp');
 
-// Ensure temp directory exists
 async function ensureTempDir() {
     try {
         await fs.mkdir(TEMP_DIR, { recursive: true });
@@ -38,7 +34,6 @@ async function ensureTempDir() {
     }
 }
 
-// Clean old temp files
 async function cleanupTempFiles() {
     try {
         const files = await fs.readdir(TEMP_DIR);
@@ -57,7 +52,6 @@ async function cleanupTempFiles() {
     }
 }
 
-// Obfuscate function
 async function obfuscateLua(code, preset = 'Medium') {
     const startTime = Date.now();
     const tempId = crypto.randomBytes(16).toString('hex');
@@ -65,34 +59,43 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Create wrapper Lua script that calls Prometheus directly
         const wrapperScript = `
--- Add paths
 package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
+
+-- DISABLE LOGGER to avoid NameUpper error
+package.loaded.logger = {
+    info = function() end,
+    warn = function() end,
+    error = function() end,
+    success = function() end,
+    log = function() end
+}
 
 local args = {...}
 local inputFile = args[1]
 local outputFile = args[2]
 local presetName = args[3]
 
--- Read input file
+-- Read input
 local file = io.open(inputFile, "r")
 if not file then
-    error("Could not open input file: " .. inputFile)
+    error("Could not open input file")
 end
 local code = file:read("*all")
 file:close()
 
 -- Load presets
 local presets = require("presets")
-
--- Get the preset config
 local preset = presets[presetName]
 if not preset then
-    error("Invalid preset: " .. presetName)
+    error("Invalid preset")
+end
+
+-- Disable logging in preset
+if preset.LuaVersion then
+    preset.LuaVersion.Log = false
 end
 
 -- Load Pipeline
@@ -102,21 +105,18 @@ local Pipeline = require("prometheus.pipeline")
 local pipeline = Pipeline:new(preset)
 local result = pipeline:apply(code)
 
--- Write output file
+-- Write output
 local outFile = io.open(outputFile, "w")
 if not outFile then
-    error("Could not open output file: " .. outputFile)
+    error("Could not open output file")
 end
 outFile:write(result)
 outFile:close()
-
-print("Success")
 `;
         
         const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
         await fs.writeFile(wrapperFile, wrapperScript, 'utf8');
         
-        // Run Prometheus
         const result = await new Promise((resolve, reject) => {
             const absInputFile = path.resolve(inputFile);
             const absOutputFile = path.resolve(outputFile);
@@ -129,13 +129,8 @@ print("Success")
             let stdout = '';
             let stderr = '';
             
-            luaProcess.stdout.on('data', (data) => {
-                stdout += data.toString();
-            });
-            
-            luaProcess.stderr.on('data', (data) => {
-                stderr += data.toString();
-            });
+            luaProcess.stdout.on('data', (data) => stdout += data.toString());
+            luaProcess.stderr.on('data', (data) => stderr += data.toString());
             
             luaProcess.on('close', (code) => {
                 if (code === 0) {
@@ -145,9 +140,7 @@ print("Success")
                 }
             });
             
-            luaProcess.on('error', (error) => {
-                reject(error);
-            });
+            luaProcess.on('error', (error) => reject(error));
             
             setTimeout(() => {
                 luaProcess.kill();
@@ -155,14 +148,10 @@ print("Success")
             }, 5 * 60 * 1000);
         });
         
-        // Read output
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
-        
-        // Add header
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
         obfuscatedCode = header + obfuscatedCode;
         
-        // Cleanup
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
         await fs.unlink(wrapperFile).catch(() => {});
@@ -184,12 +173,10 @@ print("Success")
     }
 }
 
-// Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-// Obfuscate endpoint
 app.post('/obfuscate', async (req, res) => {
     try {
         const { code, preset } = req.body;
@@ -224,7 +211,6 @@ app.post('/obfuscate', async (req, res) => {
     }
 });
 
-// Start server
 app.listen(PORT, async () => {
     console.log(`Obfuscation API running on port ${PORT}`);
     await ensureTempDir();
