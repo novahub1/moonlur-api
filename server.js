@@ -1,4 +1,5 @@
 const express = require('express');
+const { spawn } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
@@ -51,78 +52,77 @@ async function cleanupTempFiles() {
     }
 }
 
-function generateVarName(index) {
-    const chars = 'l1I';
-    let name = '';
-    let n = index;
-    do {
-        name = chars[n % chars.length] + name;
-        n = Math.floor(n / chars.length);
-    } while (n > 0);
-    return '_' + name;
-}
-
-function obfuscateLuaCode(code, preset) {
-    let obfuscated = code;
-    
-    // String obfuscation
-    let stringIndex = 0;
-    obfuscated = obfuscated.replace(/"([^"\\]*(\\.[^"\\]*)*)"|'([^'\\]*(\\.[^'\\]*)*)'/g, (match) => {
-        const str = match.slice(1, -1);
-        if (str.length < 3) return match;
-        
-        const bytes = [];
-        for (let i = 0; i < str.length; i++) {
-            bytes.push(str.charCodeAt(i));
-        }
-        
-        return `(function()local t={${bytes.join(',')}}local s=''for i=1,#t do s=s..string.char(t[i])end return s end)()`;
-    });
-    
-    // Variable name obfuscation (basic)
-    if (preset === 'Medium' || preset === 'Strong') {
-        const localVars = obfuscated.match(/local\s+([a-zA-Z_][a-zA-Z0-9_]*)/g);
-        if (localVars) {
-            const uniqueVars = [...new Set(localVars.map(v => v.replace('local ', '')))];
-            uniqueVars.forEach((varName, index) => {
-                if (['print', 'local', 'function', 'end', 'if', 'then', 'else', 'for', 'while', 'do', 'return'].includes(varName)) {
-                    return;
-                }
-                const newName = generateVarName(index);
-                const regex = new RegExp(`\\b${varName}\\b`, 'g');
-                obfuscated = obfuscated.replace(regex, newName);
-            });
-        }
-    }
-    
-    // Add junk code
-    if (preset === 'Strong') {
-        const junk = `local ${generateVarName(999)}=function()return nil end;`;
-        obfuscated = junk + obfuscated;
-    }
-    
-    return obfuscated;
-}
-
 async function obfuscateLua(code, preset = 'Medium') {
     const startTime = Date.now();
+    const tempId = crypto.randomBytes(16).toString('hex');
+    const inputFile = path.join(TEMP_DIR, `${tempId}_input.lua`);
+    const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        const obfuscatedCode = obfuscateLuaCode(code, preset);
+        await fs.writeFile(inputFile, code, 'utf8');
+        
+        const result = await new Promise((resolve, reject) => {
+            const prometheusDir = path.join(__dirname, 'prometheus');
+            const cliPath = path.join(prometheusDir, 'cli.lua');
+            
+            const luaProcess = spawn('lua5.1', [
+                cliPath,
+                '--preset', preset,
+                path.resolve(inputFile),
+                '--out', path.resolve(outputFile)
+            ], {
+                cwd: prometheusDir
+            });
+            
+            let stdout = '';
+            let stderr = '';
+            
+            luaProcess.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+            
+            luaProcess.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+            
+            luaProcess.on('close', (code) => {
+                if (code === 0) {
+                    resolve({ stdout, stderr });
+                } else {
+                    reject(new Error(`Exit code ${code}: ${stderr || stdout}`));
+                }
+            });
+            
+            luaProcess.on('error', (error) => {
+                reject(error);
+            });
+            
+            setTimeout(() => {
+                luaProcess.kill();
+                reject(new Error('Timeout'));
+            }, 5 * 60 * 1000);
+        });
+        
+        let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
-        const finalCode = header + obfuscatedCode;
+        obfuscatedCode = header + obfuscatedCode;
+        
+        await fs.unlink(inputFile).catch(() => {});
+        await fs.unlink(outputFile).catch(() => {});
         
         const processingTime = Date.now() - startTime;
         
         return {
             success: true,
-            code: finalCode,
+            code: obfuscatedCode,
             processingTime,
             originalSize: code.length,
-            obfuscatedSize: finalCode.length
+            obfuscatedSize: obfuscatedCode.length
         };
         
     } catch (error) {
+        await fs.unlink(inputFile).catch(() => {});
+        await fs.unlink(outputFile).catch(() => {});
         throw error;
     }
 }
