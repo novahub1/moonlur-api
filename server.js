@@ -1,21 +1,11 @@
 const express = require('express');
 const { spawn } = require('child_process');
-const multer = require('multer');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-    storage: storage,
-    limits: {
-        fileSize: 50 * 1024 * 1024 // 50MB limit
-    }
-});
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -78,22 +68,60 @@ async function obfuscateLua(code, preset = 'Medium') {
         // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Run Prometheus from within the prometheus directory
+        // Create wrapper Lua script that calls Prometheus correctly
+        const wrapperScript = `
+package.path = package.path .. ";./src/?.lua;./src/?/init.lua"
+
+local args = {...}
+local inputFile = args[1]
+local outputFile = args[2]
+local preset = args[3]
+
+-- Load Prometheus
+local Prometheus = require("prometheus")
+
+-- Read input
+local file = io.open(inputFile, "r")
+if not file then
+    error("Could not open input file")
+end
+local code = file:read("*all")
+file:close()
+
+-- Get preset config
+local presets = require("presets")
+local config = presets[preset]
+
+if not config then
+    error("Invalid preset: " .. preset)
+end
+
+-- Create Prometheus instance and obfuscate
+local pipeline = Prometheus.new(config)
+local result = pipeline(code)
+
+-- Write output
+local out = io.open(outputFile, "w")
+if not out then
+    error("Could not open output file")
+end
+out:write(result)
+out:close()
+
+print("Obfuscation completed successfully")
+`;
+        
+        const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
+        await fs.writeFile(wrapperFile, wrapperScript, 'utf8');
+        
+        // Run Prometheus
         const result = await new Promise((resolve, reject) => {
-            // Use absolute paths
             const absInputFile = path.resolve(inputFile);
             const absOutputFile = path.resolve(outputFile);
+            const absWrapperFile = path.resolve(wrapperFile);
             
-            const args = [
-                'cli.lua',
-                '--preset', preset,
-                absInputFile,
-                '--out', absOutputFile
-            ];
-            
-            const luaProcess = spawn('lua', args, {
-                cwd: path.join(__dirname, 'prometheus'),
-                env: { ...process.env }
+            const luaProcess = spawn('lua', [absWrapperFile, absInputFile, absOutputFile, preset], {
+                cwd: path.join(__dirname, 'prometheus')
             });
             
             let stdout = '';
@@ -128,15 +156,14 @@ async function obfuscateLua(code, preset = 'Medium') {
         // Read output
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
         
-        // Add header if not present
-        if (!obfuscatedCode.includes('Mønlur Obfuscator')) {
-            const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
-            obfuscatedCode = header + obfuscatedCode;
-        }
+        // Add header
+        const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
+        obfuscatedCode = header + obfuscatedCode;
         
         // Cleanup
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
+        await fs.unlink(wrapperFile).catch(() => {});
         
         const processingTime = Date.now() - startTime;
         
@@ -198,64 +225,10 @@ app.post('/obfuscate', async (req, res) => {
 // Start server
 app.listen(PORT, async () => {
     console.log(`Obfuscation API running on port ${PORT}`);
-    
-    // DEBUG: Check prometheus
-    const fs = require('fs');
-    console.log('=== PROMETHEUS DEBUG ===');
-    console.log('Current directory:', __dirname);
-    console.log('Files in current dir:', fs.readdirSync('.'));
-    
-    if (fs.existsSync('./prometheus')) {
-        console.log('✅ prometheus folder EXISTS');
-        console.log('Files in prometheus:', fs.readdirSync('./prometheus'));
-        
-        if (fs.existsSync('./prometheus/cli.lua')) {
-            console.log('✅ cli.lua EXISTS');
-        } else {
-            console.log('❌ cli.lua NOT FOUND');
-        }
-    } else {
-        console.log('❌ prometheus folder NOT FOUND');
-    }
-    console.log('========================');
-    
-// TEST: Try running Prometheus
-    console.log('=== TESTING PROMETHEUS ===');
-    const testCode = 'print("test")';
-    const testFile = path.join(TEMP_DIR, 'test_input.lua');
-    const testOutput = path.join(TEMP_DIR, 'test_output.lua');
-    
-    try {
-        await fs.promises.writeFile(testFile, testCode, 'utf8');
-        
-        const testProcess = spawn('lua', ['cli.lua', '--preset', 'Weak', path.resolve(testFile), '--out', path.resolve(testOutput)], {
-            cwd: path.join(__dirname, 'prometheus')
-        });
-        
-        let output = '';
-        let error = '';
-        
-        testProcess.stdout.on('data', (data) => output += data);
-        testProcess.stderr.on('data', (data) => error += data);
-        
-        testProcess.on('close', (code) => {
-            console.log('Test exit code:', code);
-            console.log('Test stdout:', output);
-            console.log('Test stderr:', error);
-            console.log('==========================');
-        });
-        
-    } catch (err) {
-        console.log('Test error:', err);
-    }
-
     await ensureTempDir();
-    
-    // Periodic cleanup
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
     process.exit(0);
