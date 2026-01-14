@@ -10,9 +10,11 @@ const execFilePromise = util.promisify(execFile);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middlewares
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Auth middleware
 app.use((req, res, next) => {
     const apiKey = req.headers['x-api-key'];
     if (!apiKey || apiKey !== process.env.API_KEY) {
@@ -21,6 +23,7 @@ app.use((req, res, next) => {
     next();
 });
 
+// CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
@@ -70,12 +73,12 @@ async function obfuscateLua(code, preset = 'Medium') {
         const prometheusDir = path.join(__dirname, 'prometheus');
         const cliPath = path.join(prometheusDir, 'cli.lua');
         
-        console.log(`🔄 Starting obfuscation with preset: ${preset}`);
-        console.log(`📁 Input file: ${inputFile}`);
-        console.log(`📁 Output file: ${outputFile}`);
+        console.log(`🔥 Mønlur Obfuscator - Starting obfuscation`);
+        console.log(`📊 Preset: ${preset}`);
+        console.log(`📊 Code size: ${code.length} bytes`);
         
         try {
-            // Usar LUAU ao invés de lua5.1
+            // Tentar com Luau primeiro
             const { stdout, stderr } = await Promise.race([
                 execFilePromise('luau', [
                     cliPath,
@@ -93,11 +96,11 @@ async function obfuscateLua(code, preset = 'Medium') {
                 )
             ]);
             
-            console.log('✅ Prometheus stdout:', stdout);
-            if (stderr) console.log('⚠️ Prometheus stderr:', stderr);
+            if (stdout) console.log('✅ Prometheus output:', stdout);
+            if (stderr) console.warn('⚠️ Prometheus warnings:', stderr);
             
         } catch (error) {
-            console.error('❌ Prometheus execution error:', error);
+            console.error('❌ Obfuscation failed:', error.message);
             throw new Error(`Obfuscation failed: ${error.message}`);
         }
         
@@ -109,7 +112,14 @@ async function obfuscateLua(code, preset = 'Medium') {
         }
         
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
-        const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
+        
+        // Header do Mønlur
+        const header = `--[[\n` +
+                      `    Mønlur Obfuscator v1.0\n` +
+                      `    Powered by Prometheus\n` +
+                      `    https://github.com/Levno7/prometheus\n` +
+                      `]]\n\n`;
+        
         obfuscatedCode = header + obfuscatedCode;
         
         // Cleanup
@@ -118,9 +128,11 @@ async function obfuscateLua(code, preset = 'Medium') {
         
         const processingTime = Date.now() - startTime;
         
-        console.log(`✅ Obfuscation completed in ${processingTime}ms`);
+        console.log(`✅ Obfuscation completed successfully!`);
+        console.log(`⏱️ Processing time: ${processingTime}ms`);
         console.log(`📊 Original size: ${code.length} bytes`);
         console.log(`📊 Obfuscated size: ${obfuscatedCode.length} bytes`);
+        console.log(`📊 Size increase: ${((obfuscatedCode.length / code.length - 1) * 100).toFixed(2)}%`);
         
         return {
             success: true,
@@ -138,14 +150,22 @@ async function obfuscateLua(code, preset = 'Medium') {
     }
 }
 
+// Health check endpoint
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: Date.now() });
+    res.json({ 
+        status: 'ok', 
+        service: 'Mønlur Obfuscator API',
+        version: '1.0.0',
+        timestamp: Date.now() 
+    });
 });
 
+// Obfuscation endpoint
 app.post('/obfuscate', async (req, res) => {
     try {
         const { code, preset } = req.body;
         
+        // Validações
         if (!code || typeof code !== 'string') {
             return res.status(400).json({ 
                 success: false, 
@@ -160,17 +180,24 @@ app.post('/obfuscate', async (req, res) => {
             });
         }
         
+        // Validar preset
         const validPresets = ['Weak', 'Medium', 'Strong', 'Minify'];
         const selectedPreset = validPresets.includes(preset) ? preset : 'Medium';
         
-        console.log(`📥 Received obfuscation request - Preset: ${selectedPreset}, Code length: ${code.length}`);
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`📥 NEW OBFUSCATION REQUEST`);
+        console.log(`📊 Preset: ${selectedPreset}`);
+        console.log(`📊 Code length: ${code.length} characters`);
+        console.log(`📊 IP: ${req.ip}`);
+        console.log(`${'='.repeat(60)}\n`);
         
+        // Executar obfuscação
         const result = await obfuscateLua(code, selectedPreset);
         
         res.json(result);
         
     } catch (error) {
-        console.error('❌ Obfuscation error:', error);
+        console.error('\n❌ OBFUSCATION ERROR:', error);
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -178,12 +205,27 @@ app.post('/obfuscate', async (req, res) => {
     }
 });
 
+// Start server
 app.listen(PORT, async () => {
-    console.log(`🚀 Mønlur Obfuscator API running on port ${PORT}`);
+    console.log('\n' + '='.repeat(60));
+    console.log('🔥 MØNLUR OBFUSCATOR API');
+    console.log('='.repeat(60));
+    console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🔧 Using Luau CLI for Roblox LuaU support`);
+    console.log(`⚡ Powered by Prometheus Obfuscator`);
+    console.log(`📝 Licensed under AGPL-3.0`);
+    console.log('='.repeat(60) + '\n');
+    
     await ensureTempDir();
     setInterval(cleanupTempFiles, 5 * 60 * 1000);
 });
 
-process.on('SIGTERM', () => process.exit(0));
-process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => {
+    console.log('\n👋 Shutting down gracefully...');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('\n👋 Shutting down gracefully...');
+    process.exit(0);
+});
