@@ -68,46 +68,51 @@ async function obfuscateLua(code, preset = 'Medium') {
         // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Create wrapper Lua script that calls Prometheus CLI
+        // Create wrapper Lua script that calls Prometheus directly
         const wrapperScript = `
-package.path = package.path .. ";./src/?.lua;./src/?/init.lua"
+-- Add paths
+package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
 
 local args = {...}
 local inputFile = args[1]
 local outputFile = args[2]
 local presetName = args[3]
 
--- Read input
+-- Read input file
 local file = io.open(inputFile, "r")
 if not file then
-    error("Could not open input file")
+    error("Could not open input file: " .. inputFile)
 end
 local code = file:read("*all")
 file:close()
 
--- Load CLI module which handles everything
-local cli = require("cli")
+-- Load Prometheus and presets directly
+local Prometheus = require("prometheus")
+local presets = require("presets")
 
--- Create a fake argv table that cli expects
-_G.arg = {
-    [0] = "cli.lua",
-    [1] = "--preset",
-    [2] = presetName,
-    [3] = inputFile,
-    [4] = "--out",
-    [5] = outputFile
-}
-
--- Run CLI
-local success, err = pcall(function()
-    cli.main()
-end)
-
-if not success then
-    error("Obfuscation failed: " .. tostring(err))
+-- Get the preset config
+local preset = presets[presetName]
+if not preset then
+    error("Invalid preset: " .. presetName .. ". Available: Weak, Medium, Strong")
 end
 
-print("Obfuscation completed successfully")
+-- Create pipeline and obfuscate
+local pipeline = Prometheus.pipeline(preset)
+local success, result = pcall(pipeline, code)
+
+if not success then
+    error("Obfuscation error: " .. tostring(result))
+end
+
+-- Write output file
+local outFile = io.open(outputFile, "w")
+if not outFile then
+    error("Could not open output file: " .. outputFile)
+end
+outFile:write(result)
+outFile:close()
+
+print("Success")
 `;
         
         const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
