@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Baixar e instalar Luau
-RUN wget https://github.com/Roblox/luau/releases/latest/download/luau-linux.zip \
-    && unzip luau-linux.zip -d /usr/local/bin/ \
+# Baixar e instalar Luau (versão específica que funciona)
+RUN wget https://github.com/luau-lang/luau/releases/download/0.652/luau-ubuntu.zip \
+    && unzip luau-ubuntu.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/luau \
-    && rm luau-linux.zip
+    && chmod +x /usr/local/bin/luau-analyze \
+    && rm luau-ubuntu.zip
 
 WORKDIR /app
 
