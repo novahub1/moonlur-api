@@ -219,6 +219,36 @@ app.listen(PORT, async () => {
     }
     console.log('========================');
     
+// TEST: Try running Prometheus
+    console.log('=== TESTING PROMETHEUS ===');
+    const testCode = 'print("test")';
+    const testFile = path.join(TEMP_DIR, 'test_input.lua');
+    const testOutput = path.join(TEMP_DIR, 'test_output.lua');
+    
+    try {
+        await fs.promises.writeFile(testFile, testCode, 'utf8');
+        
+        const testProcess = spawn('lua', ['cli.lua', '--preset', 'Weak', path.resolve(testFile), '--out', path.resolve(testOutput)], {
+            cwd: path.join(__dirname, 'prometheus')
+        });
+        
+        let output = '';
+        let error = '';
+        
+        testProcess.stdout.on('data', (data) => output += data);
+        testProcess.stderr.on('data', (data) => error += data);
+        
+        testProcess.on('close', (code) => {
+            console.log('Test exit code:', code);
+            console.log('Test stdout:', output);
+            console.log('Test stderr:', error);
+            console.log('==========================');
+        });
+        
+    } catch (err) {
+        console.log('Test error:', err);
+    }
+
     await ensureTempDir();
     
     // Periodic cleanup
