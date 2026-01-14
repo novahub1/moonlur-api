@@ -58,6 +58,39 @@ async function cleanupTempFiles() {
     }
 }
 
+// ============================================
+// FUNÇÃO PARA CONVERTER LUAU PARA LUA 5.1
+// ============================================
+function preprocessLuauCode(code) {
+    console.log('Preprocessing Luau code...');
+    
+    // 1. Converter task.wait() para wait()
+    code = code.replace(/task\.wait\s*\(/g, 'wait(');
+    
+    // 2. Converter task.spawn() para coroutine.wrap
+    code = code.replace(/task\.spawn\s*\(\s*function\s*\(\)/g, 'coroutine.wrap(function()');
+    
+    // 3. Converter task.delay() para delay() (ou spawn com wait)
+    code = code.replace(/task\.delay\s*\(\s*([^,]+)\s*,\s*function\s*\(\)/g, 
+        'spawn(function() wait($1) ');
+    
+    // 4. Remover tipos do Luau (: tipo)
+    // Remove tipos em parâmetros de função: function(var: type) -> function(var)
+    code = code.replace(/(\w+)\s*:\s*\w+(\?)?(?=\s*[,\)])/g, '$1');
+    
+    // Remove tipos em variáveis locais: local var: type = -> local var =
+    code = code.replace(/local\s+(\w+)\s*:\s*\w+(\?)?\s*=/g, 'local $1 =');
+    
+    // 5. Remover operadores compostos (+=, -=, etc) se existirem
+    code = code.replace(/(\w+)\s*\+=\s*/g, '$1 = $1 + ');
+    code = code.replace(/(\w+)\s*-=\s*/g, '$1 = $1 - ');
+    code = code.replace(/(\w+)\s*\*=\s*/g, '$1 = $1 * ');
+    code = code.replace(/(\w+)\s*\/=\s*/g, '$1 = $1 / ');
+    
+    console.log('Luau preprocessing complete');
+    return code;
+}
+
 async function obfuscateLua(code, preset = 'Medium') {
     const startTime = Date.now();
     const tempId = crypto.randomBytes(16).toString('hex');
@@ -65,7 +98,9 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
-        await fs.writeFile(inputFile, code, 'utf8');
+        // ✨ PROCESSAR O CÓDIGO LUAU ANTES DE SALVAR
+        const processedCode = preprocessLuauCode(code);
+        await fs.writeFile(inputFile, processedCode, 'utf8');
         
         const prometheusDir = path.join(__dirname, 'prometheus');
         const cliPath = path.join(prometheusDir, 'cli.lua');
