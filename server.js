@@ -78,18 +78,23 @@ async function obfuscateLua(code, preset = 'Medium') {
         // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        // Run Prometheus
-const result = await new Promise((resolve, reject) => {
-    const args = [
-        'cli.lua',
-        '--preset', preset,
-        path.resolve(inputFile),
-        '--out', path.resolve(outputFile)
-    ];
-    
-    const luaProcess = spawn('lua', args, {
-        cwd: './prometheus'
-    });
+        // Run Prometheus from within the prometheus directory
+        const result = await new Promise((resolve, reject) => {
+            // Use absolute paths
+            const absInputFile = path.resolve(inputFile);
+            const absOutputFile = path.resolve(outputFile);
+            
+            const args = [
+                'cli.lua',
+                '--preset', preset,
+                absInputFile,
+                '--out', absOutputFile
+            ];
+            
+            const luaProcess = spawn('lua', args, {
+                cwd: path.join(__dirname, 'prometheus'),
+                env: { ...process.env }
+            });
             
             let stdout = '';
             let stderr = '';
@@ -114,11 +119,10 @@ const result = await new Promise((resolve, reject) => {
                 reject(error);
             });
             
-            // Timeout
             setTimeout(() => {
                 luaProcess.kill();
                 reject(new Error('Obfuscation timeout'));
-            }, 5 * 60 * 1000); // 5 minutes
+            }, 5 * 60 * 1000);
         });
         
         // Read output
