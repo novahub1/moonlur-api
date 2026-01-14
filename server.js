@@ -86,23 +86,21 @@ end
 local code = file:read("*all")
 file:close()
 
--- Load Prometheus and presets directly
-local Prometheus = require("prometheus")
+-- Load presets
 local presets = require("presets")
 
 -- Get the preset config
 local preset = presets[presetName]
 if not preset then
-    error("Invalid preset: " .. presetName .. ". Available: Weak, Medium, Strong")
+    error("Invalid preset: " .. presetName)
 end
 
--- Create pipeline and obfuscate
-local pipeline = Prometheus.pipeline(preset)
-local success, result = pcall(pipeline, code)
+-- Load Pipeline
+local Pipeline = require("prometheus.pipeline")
 
-if not success then
-    error("Obfuscation error: " .. tostring(result))
-end
+-- Create and run pipeline
+local pipeline = Pipeline:new(preset)
+local result = pipeline:apply(code)
 
 -- Write output file
 local outFile = io.open(outputFile, "w")
