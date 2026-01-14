@@ -59,88 +59,54 @@ async function obfuscateLua(code, preset = 'Medium') {
     const outputFile = path.join(TEMP_DIR, `${tempId}_output.lua`);
     
     try {
+        // Write input file
         await fs.writeFile(inputFile, code, 'utf8');
         
-        const wrapperScript = `
-package.path = "./src/?.lua;./src/?/init.lua;" .. package.path
-
--- DISABLE LOGGER to avoid NameUpper error
-package.loaded.logger = {
-    info = function() end,
-    warn = function() end,
-    error = function() end,
-    success = function() end,
-    log = function() end
-}
-
-local args = {...}
-local inputFile = args[1]
-local outputFile = args[2]
-local presetName = args[3]
-
--- Read input
-local file = io.open(inputFile, "r")
-if not file then
-    error("Could not open input file")
-end
-local code = file:read("*all")
-file:close()
-
--- Load presets
-local presets = require("presets")
-local preset = presets[presetName]
-if not preset then
-    error("Invalid preset")
-end
-
--- Disable logging in preset
-if preset.LuaVersion then
-    preset.LuaVersion.Log = false
-end
-
--- Load Pipeline
-local Pipeline = require("prometheus.pipeline")
-
--- Create and run pipeline
-local pipeline = Pipeline:new(preset)
-local result = pipeline:apply(code)
-
--- Write output
-local outFile = io.open(outputFile, "w")
-if not outFile then
-    error("Could not open output file")
-end
-outFile:write(result)
-outFile:close()
-`;
-        
-        const wrapperFile = path.join(TEMP_DIR, `${tempId}_wrapper.lua`);
-        await fs.writeFile(wrapperFile, wrapperScript, 'utf8');
-        
+        // Run Prometheus CLI directly with lua5.1
         const result = await new Promise((resolve, reject) => {
-            const absInputFile = path.resolve(inputFile);
-            const absOutputFile = path.resolve(outputFile);
-            const absWrapperFile = path.resolve(wrapperFile);
+            const prometheusDir = path.join(__dirname, 'prometheus');
+            const cliPath = path.join(prometheusDir, 'cli.lua');
             
-            const luaProcess = spawn('lua', [absWrapperFile, absInputFile, absOutputFile, preset], {
-                cwd: path.join(__dirname, 'prometheus')
+            // Execute: lua5.1 cli.lua --preset Medium input.lua --out output.lua
+            const luaProcess = spawn('lua5.1', [
+                cliPath,
+                '--preset', preset,
+                path.resolve(inputFile),
+                '--out', path.resolve(outputFile)
+            ], {
+                cwd: prometheusDir,
+                env: {
+                    ...process.env,
+                    LUA_PATH: './src/?.lua;./src/?/init.lua;./?.lua;;'
+                }
             });
             
             let stdout = '';
             let stderr = '';
             
-            luaProcess.stdout.on('data', (data) => stdout += data.toString());
-            luaProcess.stderr.on('data', (data) => stderr += data.toString());
+            luaProcess.stdout.on('data', (data) => {
+                stdout += data.toString();
+                console.log('Prometheus stdout:', data.toString());
+            });
+            
+            luaProcess.stderr.on('data', (data) => {
+                stderr += data.toString();
+                console.error('Prometheus stderr:', data.toString());
+            });
             
             luaProcess.on('close', (code) => {
+                console.log('Prometheus exit code:', code);
                 if (code === 0) {
                     resolve({ stdout, stderr });
                 } else {
-                    reject(new Error(`Obfuscation failed: ${stderr || stdout}`));
+                    reject(new Error(`Obfuscation failed with exit code ${code}: ${stderr || stdout}`));
                 }
             });
             
-            luaProcess.on('error', (error) => reject(error));
+            luaProcess.on('error', (error) => {
+                console.error('Prometheus process error:', error);
+                reject(error);
+            });
             
             setTimeout(() => {
                 luaProcess.kill();
@@ -148,13 +114,16 @@ outFile:close()
             }, 5 * 60 * 1000);
         });
         
+        // Read output
         let obfuscatedCode = await fs.readFile(outputFile, 'utf8');
+        
+        // Add header
         const header = '-- This file was protected using Mønlur Obfuscator [v1.0]\n\n';
         obfuscatedCode = header + obfuscatedCode;
         
+        // Cleanup
         await fs.unlink(inputFile).catch(() => {});
         await fs.unlink(outputFile).catch(() => {});
-        await fs.unlink(wrapperFile).catch(() => {});
         
         const processingTime = Date.now() - startTime;
         
